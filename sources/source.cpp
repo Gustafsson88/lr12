@@ -1,4 +1,6 @@
-// Copyright 2020 Your Name <your_email>
+// Copyright 2021 Danil Postvaykin <postvaykin01@mail.ru>
+
+#include "header.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -9,16 +11,31 @@
 #include <string_view>
 #include <vector>
 
+#include <boost/program_options.hpp>
+
 class Log {
+ protected:
+  explicit Log(size_t level) : level_(level) { out_ = &std::cout; }
+  static Log* singleton_;
+
  public:
+  Log(Log &other) = delete;
+
+  void operator=(const Log &) = delete;
+
+  static Log *GetInstance(size_t level)
+  {
+    if (singleton_==nullptr){
+      singleton_ = new Log(level);
+    }
+    return singleton_;
+  }
+
   void Write(std::string_view message) const { *out_ << message << std::endl; }
 
   void WriteDebug(std::string_view message) const {
     if (level_ > 0) *out_ << message << std::endl;
   }
-
-  Log(size_t level) : level_(level) { out_ = &std::cout; }
-
  private:
   size_t level_ = 0;
   mutable std::ostream* out_;
@@ -34,7 +51,7 @@ constexpr size_t kMinLines = 10;
 
 class UsedMemory {
  public:
-  UsedMemory(const Log& log) : log_(&log) {}
+  explicit UsedMemory(const Log* log) : log_(log) {}
 
   void OnDataLoad(const std::vector<Item>& old_items,
                   const std::vector<Item>& new_items) {
@@ -50,7 +67,8 @@ class UsedMemory {
       used_ += item.name.capacity();
       used_ += sizeof(item.score);
     }
-    log_->Write("UsedMemory::OnDataLoad: new size = " + std::to_string(used_));
+    log_->Write("UsedMemory::OnDataLoad: new size = " +
+                std::to_string(used_));
   }
 
   void OnRawDataLoad(const std::vector<std::string>& old_items,
@@ -63,10 +81,11 @@ class UsedMemory {
     for (const auto& item : new_items) {
       used_ += item.capacity();
     }
-    log_->Write("UsedMemory::OnDataLoad: new size = " + std::to_string(used_));
+    log_->Write("UsedMemory::OnDataLoad: new size = " +
+                std::to_string(used_));
   }
 
-  size_t used() const { return used_; }
+  [[nodiscard]]size_t used() const { return used_; }
 
  private:
   const Log* log_;
@@ -75,7 +94,7 @@ class UsedMemory {
 
 class StatSender {
  public:
-  StatSender(const Log& log) : log_(&log) {}
+  explicit StatSender(const Log& log) : log_(&log) {}
   void OnLoaded(const std::vector<Item>& new_items) {
     log_->WriteDebug("StatSender::OnDataLoad");
 
@@ -85,7 +104,8 @@ class StatSender {
   void Skip(const Item& item) { AsyncSend({item}, "/items/skiped"); }
 
  private:
-  void AsyncSend(const std::vector<Item>& items, std::string_view path) {
+  void AsyncSend(const std::vector<Item>& items, std::string_view path)
+  {
     log_->Write(path);
     log_->Write("send stat " + std::to_string(items.size()));
 
@@ -184,8 +204,8 @@ class PageContainer {
     data_ = std::move(data);
   }
 
-  PageContainer(const Log& log, UsedMemory* memory_counter)
-      : log_(&log), memory_counter_(memory_counter), stat_sender_(*log_) {}
+  PageContainer(const Log* log, UsedMemory* memory_counter)
+      : log_(log), memory_counter_(memory_counter), stat_sender_(*log_) {}
 
  private:
   const Log* log_;
@@ -196,7 +216,8 @@ class PageContainer {
 };
 
 int main(int argc, char* argv[]) {
-  Log the_log(0);
+  Log* the_log = Log::GetInstance(0);
+
   UsedMemory used_memory(the_log);
 
   std::string filename = "data.txt";
@@ -211,7 +232,7 @@ int main(int argc, char* argv[]) {
   std::ifstream in(filename);
   page.Load(in, threshold);
 
-  the_log.Write(std::to_string(used_memory.used()));
+  the_log->Write(std::to_string(used_memory.used()));
 
   for (size_t i = 0; i < 5; ++i) {
     const auto& item = page.ByIndex(i);
@@ -221,7 +242,7 @@ int main(int argc, char* argv[]) {
   }
 
   page.Reload(threshold);
-  the_log.Write(std::to_string(used_memory.used()));
+  the_log->Write(std::to_string(used_memory.used()));
 
   return 0;
 }
